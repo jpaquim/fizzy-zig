@@ -1,0 +1,3 @@
+[submodule "fizzy"]
+	path = fizzy
+	url = https://github.com/wasmx/fizzy
