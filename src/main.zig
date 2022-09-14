@@ -1,43 +1,32 @@
 const std = @import("std");
-
-const fizzy = @cImport({
-    @cInclude("fizzy/fizzy.h");
-});
+const fizzy = @import("./fizzy.zig");
 
 pub fn main() !void {
     const wasm_binary = @embedFile("test.wasm");
-    if (executeMain(i32, wasm_binary, wasm_binary.len)) |result|
-        std.debug.print("success, result: {}", .{result})
+    if (executeMain(i32, wasm_binary)) |result|
+        std.debug.print("success, result: {}\n", .{result})
     else |err|
-        std.debug.print("error {}", .{err});
+        std.debug.print("error {}\n", .{err});
 }
 
-fn executeMain(comptime T: type, wasm_binary: []const u8, wasm_binary_size: usize) !?T {
+fn executeMain(comptime T: type, wasm_binary: []const u8) !?T {
     // Parse and validate binary module.
-    const module = fizzy.fizzy_parse(wasm_binary.ptr, wasm_binary_size, null);
+    const module = fizzy.parse(wasm_binary) orelse return error.InvalidWasmBinary;
+    // defer module.deinit();
 
     // Find main function.
-    var main_fn_index: u32 = undefined;
-    if (!fizzy.fizzy_find_exported_function_index(module, "main", &main_fn_index))
-        return error.FunctionNotExported;
+    const main_fn_index = module.findExportedFunctionIndex("main") orelse return error.FunctionNotExported;
 
     // Instantiate module without imports.
-    const instance_opt = fizzy.fizzy_instantiate(module, null, 0, null, null, null, 0, fizzy.FizzyMemoryPagesLimitDefault, null);
-    if (instance_opt == null)
-        return error.InstantiateFailed;
-    const instance = instance_opt.?;
-    defer fizzy.fizzy_free_instance(instance);
+    const instance = fizzy.instantiate(module, null, null, null, null, null, null) orelse return error.InstantiateFailed;
+    defer instance.deinit();
 
-    const ctx_opt = fizzy.fizzy_create_execution_context(0);
-    if (ctx_opt == null)
-        return error.CreateExecutionContextFailed;
-    const ctx = ctx_opt.?;
-    defer fizzy.fizzy_free_execution_context(ctx);
+    const ctx = fizzy.createExecutionContext(0) orelse return error.CreateExecutionContextFailed;
+    defer ctx.deinit();
 
     // Execute main function with single argument
-    var args: [1]fizzy.FizzyValue = undefined;
-    args[0] = fizzy.FizzyValue{ .i32 = 1 };
-    const result = fizzy.fizzy_execute(instance, main_fn_index, &args, ctx);
+    const args: [1]fizzy.Value = .{ .{ .i32 = 1} };
+    const result = fizzy.execute(instance, main_fn_index, args[0..1], ctx);
     if (result.trapped)
         return error.ExecutionTrapped;
     if (result.has_value) {
